@@ -58,8 +58,6 @@ VS Code **tasks** and **launch** settings are included:
 
 ## Screenshots
 
-> Place screenshots in `docs/images/` (rename your current `READMEImages` folder to this).
-
 | Empty state                           | Editor                          | Entry view                           |
 | ------------------------------------- | ------------------------------- | ------------------------------------ |
 | ![Empty state](docs/images/empty.png) | ![Editor](docs/images/edit.png) | ![Entry view](docs/images/entry.png) |
