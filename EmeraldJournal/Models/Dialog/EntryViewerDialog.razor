@@ -1,0 +1,236 @@
+﻿@using EmeraldJournal.Models
+@using EmeraldJournal.Services
+@using MudBlazor
+@inject JournalService Journal
+@inject IDialogService Dialogs
+
+<MudDialog Class="viewer-dialog">
+    <DialogContent>
+        <!-- Left/Right buttons ... -->
+        <MudStack Row="true">
+            <MudIconButton Class="nav left" Icon="@Icons.Material.Filled.ChevronLeft"
+                Disabled="@(_index >= _entries.Count - 1)" OnClick="@Next" Size="Size.Large" />
+            <MudIconButton Class="nav right" Icon="@Icons.Material.Filled.ChevronRight" Disabled="@(_index == 0)"
+                OnClick="@Prev" Size="Size.Large" />
+            <MudSpacer />
+            <MudIconButton Icon="@Icons.Material.Filled.Close" OnClick="@Close" Edge="Edge.End" />
+        </MudStack>
+        <MudStack Spacing="2" Class="viewer-stack">
+            <!-- header -->
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudText Typo="Typo.h5">@Current.Title</MudText>
+                <MudSpacer />
+                <MudStack Spacing="1">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
+                        Title="Edit" OnClick="@(() => OpenEdit(@Current))" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                        Title="Delete" OnClick="@(() => DeleteAsync(@Current))" />
+                </MudStack>
+            </MudStack>
+
+            <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                @Current.Date.ToString("dddd, dd MMM yyyy")
+            </MudText>
+            <MudDivider />
+
+            <!-- Keep horizontal swipe, allow vertical scroll -->
+            <div class="@($"viewer-swipe {(_swiping ? "swiping" : "")}")" @onpointerdown="StartSwipe"
+                @onpointermove="MoveSwipe" @onpointerup="EndSwipe" @onpointercancel="CancelSwipe">
+                <div class="content">
+                    <MudText Class="journal-text">@Current.Text</MudText>
+                </div>
+            </div>
+        </MudStack>
+    </DialogContent>
+</MudDialog>
+
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public List<JournalEntry> _entries { get; set; } = new();
+    [Parameter] public int StartIndex { get; set; }
+
+    private int _index;
+    private JournalEntry Current => _entries[_index];
+
+    protected override void OnParametersSet()
+    {
+        if (_entries is null || _entries.Count == 0) return;
+        _index = Math.Clamp(StartIndex, 0, _entries.Count - 1);
+    }
+
+    private double _startX, _startY;
+    private DateTime _startT;
+    private bool _tracking, _swiping;
+
+    private const double ActivateDistance = 12; // px before we decide direction
+    private const double SwipeDistance = 60; // px to trigger prev/next
+    private const double MaxAngleTan = 0.6; // ~tan(31°): allow some vertical drift
+
+    private void StartSwipe(PointerEventArgs e)
+    {
+        _startX = e.ClientX;
+        _startY = e.ClientY;
+        _startT = DateTime.UtcNow;
+        _tracking = true;
+        _swiping = false; // allow vertical scroll initially
+    }
+
+    private void MoveSwipe(PointerEventArgs e)
+    {
+        if (!_tracking) return;
+        var dx = e.ClientX - _startX;
+        var dy = e.ClientY - _startY;
+
+        // Not yet decided? Check if movement is big enough to classify
+        if (!_swiping && Math.Abs(dx) > ActivateDistance)
+        {
+            // It's "horizontal" if vertical drift is within angle tolerance
+            if (Math.Abs(dy) <= Math.Abs(dx) * MaxAngleTan)
+            {
+                _swiping = true; // lock into horizontal swipe mode
+                StateHasChanged(); // applies the 'swiping' CSS class (touch-action:none)
+            }
+        }
+    }
+
+    private void EndSwipe(PointerEventArgs e)
+    {
+        if (!_tracking) return;
+        var dx = e.ClientX - _startX;
+
+        if (_swiping && Math.Abs(dx) >= SwipeDistance)
+        {
+            if (dx < 0) Prev(); else Next();
+        }
+
+        _tracking = false;
+        _swiping = false;
+        StateHasChanged();
+    }
+
+    private void CancelSwipe(PointerEventArgs _)
+    {
+        _tracking = false;
+        _swiping = false;
+        StateHasChanged();
+    }
+    private void Prev()
+    {
+        if (_index <= 0) return;
+        _index--;
+        StateHasChanged();
+    }
+
+    private void Next()
+    {
+        if (_index >= _entries.Count - 1) return;
+        _index++;
+        StateHasChanged();
+    }
+
+    private bool TryPrev()
+    {
+        if (_index <= 0) return false;
+        _index--;
+        StateHasChanged();
+        return true;
+    }
+
+    private bool TryNext()
+    {
+        if (_index >= _entries.Count - 1) return false;
+        _index++;
+        StateHasChanged();
+        return true;
+    }
+
+    private void Close() => MudDialog.Close();
+
+
+    private async Task OpenEdit(JournalEntry e)
+    {
+        DialogParameters<Models.Dialog.EntryEditDialog> prms = new() { { x => x.Entry, e } };
+        DialogOptions op = new DialogOptions { FullScreen = true, MaxWidth = MaxWidth.Medium };
+        var dlg = await Dialogs.ShowAsync<Models.Dialog.EntryEditDialog>("Edit Entry", prms, op);
+        var res = await dlg.Result;
+        if (res != null && !res.Canceled && res.Data is JournalEntry updated)
+        {
+            var idx = _entries.FindIndex(x => x.Id == updated.Id);
+            if (idx >= 0)
+            {
+                _entries[idx] = updated;
+                _index = idx;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task DeleteAsync(JournalEntry e)
+    {
+        var confirm = await Dialogs.ShowMessageBox("Delete entry", $"Delete “{e.Title}”?", yesText: "Delete", cancelText:
+        "Cancel");
+        if (confirm is true)
+        {
+            await Journal.DeleteAsync(e.Id);
+            if (!TryNext())
+            {
+                if (!TryPrev()) MudDialog.Close(DialogResult.Ok(true));
+            }
+        ;
+            StateHasChanged();
+        }
+    }
+}
+
+<style>
+    .viewer-dialog .mud-dialog-content {
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
+    }
+
+    .mud-overlay {
+        pointer-events: auto !important;
+        z-index: 1400 !important;
+        /* above drawers/appbar if you customized z-indexes */
+    }
+
+    /* The scroll container inside the dialog should not pass scroll upwards */
+    .viewer-dialog .content {
+        overscroll-behavior: contain;
+    }
+
+    /* parent stack */
+    .viewer-stack {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        align-items: stretch;
+        /* ensure children stretch, not center */
+    }
+
+    /* IMPORTANT: no flex here; let it be a block so content stays at top */
+    .viewer-swipe {
+        flex: 1 1 auto;
+        min-height: 0;
+        touch-action: pan-y;
+        /* keep vertical scroll working */
+    }
+
+    /* scrollable area */
+    .content {
+        height: 100%;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Just in case your text is long/wide */
+    .journal-text {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+    }
+</style>

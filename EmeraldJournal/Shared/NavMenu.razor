@@ -1,0 +1,50 @@
+﻿@using System.Security.Claims
+
+<MudNavMenu Dense="true">
+    <AuthorizeView Context="auth">
+        <Authorized>
+            <!-- username header -->
+            <MudText Typo="Typo.h6" Class="px-4 py-2">
+                @(auth.User.Identity?.Name ?? auth.User.FindFirst(ClaimTypes.Email)?.Value ?? "User")
+            </MudText>
+            <MudDivider />
+
+            <MudNavLink Href="/entries" Icon="@Icons.Material.Filled.LibraryBooks" Match="NavLinkMatch.All">
+                Entries
+            </MudNavLink>
+
+            <MudNavLink Href="/search" Icon="@Icons.Material.Filled.Search" Match="NavLinkMatch.Prefix">
+                Search
+            </MudNavLink>
+
+            <MudNavLink Href="/calendar" Icon="@Icons.Material.Filled.CalendarToday" Match="NavLinkMatch.Prefix">
+                Calendar
+            </MudNavLink>
+
+            <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings" Match="NavLinkMatch.Prefix">
+                Settings
+            </MudNavLink>
+
+            <MudDivider Class="my-2" />
+
+        </Authorized>
+
+        <NotAuthorized>
+            <!-- anonymous visitor -->
+            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Home" Match="NavLinkMatch.All">
+                Home
+            </MudNavLink>
+        </NotAuthorized>
+
+    </AuthorizeView>
+
+    <!-- optional admin area -->
+    <AuthorizeView Roles="Administrator">
+        <Authorized>
+            <MudNavLink Href="/admin" Icon="@Icons.Material.Filled.AdminPanelSettings" Match="NavLinkMatch.Prefix">
+                Admin
+            </MudNavLink>
+        </Authorized>
+    </AuthorizeView>
+
+</MudNavMenu>

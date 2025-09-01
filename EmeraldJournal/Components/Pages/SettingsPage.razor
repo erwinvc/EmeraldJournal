@@ -1,0 +1,369 @@
+@attribute [Authorize]
+@using System.Text
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using EmeraldJournal.Models
+@using EmeraldJournal.Services
+@using MudBlazor
+@using System.Text.Encodings.Web
+@using System.Text.Unicode
+@using System.IO.Compression
+@using static EmeraldJournal.Services.JournalService
+@inject JournalService Journal
+@inject IDialogService Dialogs
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<MudPaper Elevation="4" Class="pa-3 mx-auto" MaxWidth="900px">
+    <MudStack Spacing="3">
+        <MudText Typo="Typo.h4">Settings</MudText>
+
+        <!-- Backup -->
+        <MudCard>
+            <MudCardHeader>
+                <MudText Typo="Typo.h6">Backup</MudText>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Color="Color.Secondary">Download all your entries as a backup.</MudText>
+            </MudCardContent>
+            <MudCardActions Class="gap-2">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FileDownload"
+                    OnClick="ExportJsonAsync">Export JSON</MudButton>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.TableView"
+                    OnClick="ExportCsvAsync">Export CSV</MudButton>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Article"
+                    OnClick="ExportMarkdownZipAsync">Export Markdown</MudButton>
+            </MudCardActions>
+        </MudCard>
+
+        <!-- Restore -->
+        <MudCard>
+            <MudCardHeader>
+                <MudText Typo="Typo.h6">Restore</MudText>
+            </MudCardHeader>
+
+            <MudCardContent>
+                <MudText Color="Color.Secondary">
+                    Restore from a previously exported JSON backup. Choose whether to merge with existing entries or
+                    replace them.
+                </MudText>
+
+                <MudStack Spacing="2" Class="mt-2">
+                    <MudRadioGroup T="RestoreMode" @bind-SelectedOption="_mode" Row="true">
+                        <MudRadio T="RestoreMode" Option="RestoreMode.Merge">Merge</MudRadio>
+                        <MudRadio T="RestoreMode" Option="RestoreMode.ReplaceAll">Replace all</MudRadio>
+                    </MudRadioGroup>
+
+                    <InputFile OnChange="OnFileSelected" accept=".json,application/json" />
+                    @if (_preview is not null)
+                    {
+                        <MudAlert Severity="Severity.Info">
+                            Preview: @_preview.Entries.Count entries found in backup.
+                            @if (_mode == RestoreMode.ReplaceAll)
+                            {
+                                <span> This will delete all your current entries before importing.</span>
+                            }
+                        </MudAlert>
+                    }
+                </MudStack>
+            </MudCardContent>
+
+            <MudCardActions Class="gap-2">
+                <MudButton Disabled="_preview is null || _busy" Color="Color.Primary"
+                    StartIcon="@Icons.Material.Filled.Restore" OnClick="ApplyRestoreAsync">
+                    Restore
+                </MudButton>
+                <MudButton Disabled="_preview is null || _busy" Variant="Variant.Outlined"
+                    StartIcon="@Icons.Material.Filled.Clear" OnClick="@(() => { _preview = null; _fileName = null; })">
+                    Clear File
+                </MudButton>
+                @if (_fileName is not null)
+                {
+                    <MudChip T="string" Variant="Variant.Outlined" Color="Color.Default">@_fileName</MudChip>
+                }
+            </MudCardActions>
+
+            @if (_busy)
+            {
+                <MudCardContent>
+                    <MudProgressLinear Indeterminate Color="Color.Primary" />
+                </MudCardContent>
+            }
+        </MudCard>
+
+        @if (_report is not null)
+        {
+            <MudAlert Severity="Severity.Success" Variant="Variant.Filled">
+                Restore complete. Added: @_report.Added, Updated: @_report.Updated, Skipped: @_report.Skipped, Deleted:
+                @_report.Deleted
+            </MudAlert>
+            @if (_report.Errors.Any())
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-2">
+                    <MudText Typo="Typo.subtitle2">Errors:</MudText>
+                    <ul style="margin:0">
+                        @foreach (var err in _report.Errors)
+                        {
+                            <li>@err</li>
+                        }
+                    </ul>
+                </MudAlert>
+            }
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    private RestoreMode _mode = RestoreMode.Merge;
+    private BackupPayload? _preview;
+    private string? _fileName;
+    private bool _busy;
+    private RestoreReport? _report;
+
+    private async Task ExportJsonAsync()
+{
+    var entries = await Journal.GetEntriesAsync();
+
+    var payload = new {
+        app = "EmeraldJournal",
+        version = 1,
+        exportedAtUtc = DateTime.UtcNow,
+        entries = entries.Select(e => new {
+            e.Id, e.Title, e.Date, e.Text, e.CreatedAtUtc, e.UpdatedAtUtc
+        })
+    };
+
+    var json = JsonSerializer.Serialize(
+        payload,
+        new JsonSerializerOptions {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
+
+    var fileName = $"emeraldjournal-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
+    await JS.InvokeVoidAsync("ej.download", fileName, "application/json;charset=utf-8", json);
+}
+
+    private async Task ExportCsvAsync()
+    {
+        var entries = await Journal.GetEntriesAsync();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Id,Date,Title,Text");
+
+        foreach (var e in entries.OrderBy(e => e.Date).ThenBy(e => e.Title))
+        {
+            string Esc(string? s) => (s ?? string.Empty).Replace("\"", "\"\"");
+            sb.Append('"').Append(e.Id).Append('"').Append(',')
+            .Append('"').Append(e.Date.ToString("yyyy-MM-dd")).Append('"').Append(',')
+            .Append('"').Append(Esc(e.Title)).Append('"').Append(',')
+            .Append('"').Append(Esc(e.Text)).Append('"').AppendLine();
+        }
+
+        // Prepend UTF-8 BOM so Excel recognizes encoding
+        var csv = "\uFEFF" + sb.ToString();
+
+        var name = $"emeraldjournal-export-{DateTime.UtcNow:yyyyMMdd-HHmmss}.csv";
+        await JS.InvokeVoidAsync("ej.download", name, "text/csv;charset=utf-8", csv);
+    }
+
+    private async Task ExportMarkdownZipAsync()
+    {
+        var entries = await Journal.GetEntriesAsync();
+        var ordered = entries
+        .OrderBy(e => e.Date) // choose order for index & prev/next
+        .ThenBy(e => e.Title)
+        .ToList();
+
+        // Build a list with filenames we’ll reference in links
+        var files = ordered.Select(e =>
+        {
+            var safeTitle = SanitizeFileName(string.IsNullOrWhiteSpace(e.Title) ? "untitled" : e.Title);
+            var name = $"{e.Date:yyyy-MM-dd} {safeTitle}-{e.Id}.md";
+            return new ExportFile
+            {
+                Entry = e,
+                FileName = name,
+                Link = EscapeLink(name), // URL-escaped for Markdown link targets
+                Display = $"{e.Date:yyyy-MM-dd} — {e.Title}"
+            };
+        }).ToList();
+
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            // 1) Write each entry file with nav links
+            for (int i = 0; i < files.Count; i++)
+            {
+                var f = files[i];
+                var prev = i > 0 ? files[i - 1] : null;
+                var next = i < files.Count - 1 ? files[i + 1] : null;
+
+                var entry = zip.CreateEntry(f.FileName, CompressionLevel.Optimal);
+                await using (var w = new StreamWriter(entry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)))
+                {
+                    // Title
+                    await w.WriteLineAsync($"# {f.Entry.Title}");
+                    await w.WriteLineAsync();
+                    await w.WriteLineAsync($"_{f.Entry.Date:yyyy-MM-dd}_");
+                    await w.WriteLineAsync();
+
+                    // Navigation
+                    var parts = new List<string>();
+                    if (prev is not null) parts.Add($"[← Previous]({prev.Link})");
+                    parts.Add("[Index](README.md)");
+                    if (next is not null) parts.Add($"[Next →]({next.Link})");
+                    await w.WriteLineAsync(string.Join(" · ", parts));
+                    await w.WriteLineAsync();
+                    await w.WriteLineAsync("---");
+                    await w.WriteLineAsync();
+
+                    // Body (markdown is plain text)
+                    await w.WriteAsync(f.Entry.Text ?? string.Empty);
+                    await w.WriteLineAsync();
+                }
+            }
+
+            // 2) Write README.md index
+            var readme = zip.CreateEntry("README.md", CompressionLevel.Optimal);
+            await using (var w = new StreamWriter(readme.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)))
+            {
+                await w.WriteLineAsync("# EmeraldJournal Export");
+                await w.WriteLineAsync();
+                await w.WriteLineAsync($"Exported: {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC");
+                await w.WriteLineAsync();
+                await w.WriteLineAsync($"Total entries: {files.Count}");
+                await w.WriteLineAsync();
+                await w.WriteLineAsync("---");
+                await w.WriteLineAsync();
+
+                // Group by year
+                foreach (var grp in files.GroupBy(f => f.Entry.Date.Year).OrderByDescending(g => g.Key))
+                {
+                    await w.WriteLineAsync($"## {grp.Key}");
+                    await w.WriteLineAsync();
+                    foreach (var f in grp)
+                    {
+                        // simple bullet list with link
+                        await w.WriteLineAsync($"- [{f.Display}]({f.Link})");
+                    }
+                    await w.WriteLineAsync();
+                }
+            }
+        }
+
+        ms.Position = 0;
+        var base64 = Convert.ToBase64String(ms.ToArray());
+        var zipName = $"emeraldjournal-markdown-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip";
+        await JS.InvokeVoidAsync("ej.downloadBytes", zipName, "application/zip", base64);
+    }
+
+    private sealed class ExportFile
+    {
+        public required JournalEntry Entry { get; init; }
+        public required string FileName { get; init; }
+        public required string Link { get; init; } // URL-escaped filename for markdown link
+        public required string Display { get; init; } // text shown in index
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var ch in name)
+            sb.Append(invalid.Contains(ch) ? '_' : ch);
+        var s = sb.ToString().Trim();
+        return s.Length > 80 ? s[..80] : s;
+    }
+
+    private static string EscapeLink(string fileName)
+    {
+        // Escape spaces and special chars for markdown links to work everywhere (e.g., GitHub)
+        // Use Uri.EscapeDataString for safe URL path segments
+        return Uri.EscapeDataString(fileName);
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _report = null;
+        _preview = null;
+        _fileName = null;
+
+        var file = e.File;
+        if (file is null) return;
+
+        if (file.Size > 10 * 1024 * 1024)
+        {
+            Snackbar.Add("File too large (max 10MB).", Severity.Error);
+            return;
+        }
+
+        await using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+        using var reader = new StreamReader(stream);
+        var json = await reader.ReadToEndAsync();
+
+        try
+        {
+            _preview = JsonSerializer.Deserialize<BackupPayload>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (_preview is null || _preview.Entries is null)
+                throw new InvalidOperationException("Invalid backup file.");
+
+            _fileName = file.Name;
+            Snackbar.Add($"Loaded {_preview.Entries.Count} entries from backup.", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to parse backup: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ApplyRestoreAsync()
+    {
+        if (_preview is null) return;
+
+        if (_mode == RestoreMode.ReplaceAll)
+        {
+            var ok = await Dialogs.ShowMessageBox(
+            "Replace all entries?",
+            "This will delete all your current entries and import the backup. Continue?",
+            yesText: "Replace all", cancelText: "Cancel");
+            if (ok != true) return;
+        }
+
+        _busy = true;
+        _report = null;
+        try
+        {
+            _report = await Journal.RestoreAsync(_preview, _mode);
+            Snackbar.Add("Restore completed.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Restore failed: {ex.Message}", Severity.Error);
+        }
+        finally { _busy = false; }
+    }
+
+    // Backup DTOs (kept here for clarity)
+    public class BackupPayload
+    {
+        public string App { get; set; } = "EmeraldJournal";
+        public int Version { get; set; } = 1;
+        public DateTime ExportedAtUtc { get; set; }
+        public List<BackupEntry> Entries { get; set; } = new();
+    }
+
+    public class BackupEntry
+    {
+        public int? Id { get; set; }
+        public string? Title { get; set; }
+        public DateTime Date { get; set; }
+        public string? Text { get; set; }
+        public DateTime? CreatedAtUtc { get; set; }
+        public DateTime? UpdatedAtUtc { get; set; }
+    }
+}

@@ -1,0 +1,192 @@
+@using System.ComponentModel.DataAnnotations
+@using EmeraldJournal.Models
+@using EmeraldJournal.Services
+@using MudBlazor
+@using System.Text.Json
+
+<MudDialog Class="entry-edit-dialog">
+    <DialogContent>
+        <MudForm @ref="_formRef" Model="_model">
+            <MudTextField Value="_model.Title" T="string" ValueChanged="SetTitle" Immediate="true" Label="Title" Required="true"
+                MaxLength="200" />
+
+            <MudDatePicker Date="_model.Date" DateChanged="SetDate" Label="Date" Required="true" />
+
+            <MudTextField Value="_model.Text" T="string" ValueChanged="SetText" Immediate="true" Lines="50" Label="Text"
+                Required="true" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+      <div class="actions-center">
+        @if (_model.Id != 0)
+        {
+          <MudButton Color="Color.Error" Variant="Variant.Outlined" OnClick="DeleteAsync"
+                     StartIcon="@Icons.Material.Filled.Delete">Delete</MudButton>
+        }
+        <MudButton Variant="Variant.Text" OnClick="CloseAsync">Cancel</MudButton>
+        <MudButton Color="Color.Primary" OnClick="SaveAsync" StartIcon="@Icons.Material.Filled.Save">Save</MudButton>
+      </div>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public JournalEntry? Entry { get; set; }
+    [Parameter] public DateTime? InitialDate { get; set; }
+
+    [Inject] private JournalService Journal { get; set; } = default!;
+    [Inject] private IDialogService Dialogs { get; set; } = default!;
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    private MudForm? _formRef;
+    private EntryForm _model = new();
+    private EntryForm _original = new(); // for “dirty” check
+    private CancellationTokenSource? _debounceCts;
+
+    // One key per entry; "new" for new entries
+    private string DraftKey => $"ej:draft:{(_model.Id == 0 ? "new" : _model.Id.ToString())}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Initialize from parameters
+        if (Entry is null)
+            _model = new EntryForm { Id = 0, Title = "", Date = (InitialDate ?? DateTime.Today).Date, Text = "" };
+        else
+            _model = new EntryForm { Id = Entry.Id, Title = Entry.Title, Date = Entry.Date, Text = Entry.Text };
+
+        // Keep a snapshot to detect unsaved changes
+        _original = Clone(_model);
+
+        // Try to restore a draft (if any)
+        await TryLoadDraftAsync();
+    }
+
+    // ---- field setters with debounce autosave ----
+    private void SetTitle(string? v) { if (_model.Title != v) { _model.Title = v; DebouncedSaveDraft(); } }
+    private void SetText(string? v) { if (_model.Text != v) { _model.Text = v; DebouncedSaveDraft(); } }
+    private void SetDate(DateTime? d) { if (_model.Date != d) { _model.Date = d; DebouncedSaveDraft(); } }
+
+    private void DebouncedSaveDraft()
+    {
+        Console.WriteLine("DebouncedSaveDraft called");
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        _ = DebouncedSaveDraftAsync(_debounceCts.Token);
+    }
+
+    private async Task DebouncedSaveDraftAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(600, token); // debounce
+            await SaveDraftAsync();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task SaveDraftAsync()
+    {
+        var json = JsonSerializer.Serialize(_model);
+        await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, json);
+    }
+
+    private async Task<bool> TryLoadDraftAsync()
+    {
+        var json = await JS.InvokeAsync<string>("localStorage.getItem", DraftKey);
+        if (string.IsNullOrWhiteSpace(json)) return false;
+
+        try
+        {
+            var draft = JsonSerializer.Deserialize<EntryForm>(json);
+            if (draft is null) return false;
+
+            // If it's the same entry (or “new”), restore
+            if ((_model.Id == 0 && draft.Id == 0) || (_model.Id != 0 && draft.Id == _model.Id))
+            {
+                _model = draft;
+                StateHasChanged();
+                return true;
+            }
+        }
+        catch { /* ignore bad JSON */ }
+        return false;
+    }
+
+    private async Task ClearDraftAsync() =>
+    await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+
+    private static EntryForm Clone(EntryForm e) =>
+    new() { Id = e.Id, Title = e.Title, Date = e.Date, Text = e.Text };
+
+    private bool IsDirty() =>
+    _model.Title?.Trim() != _original.Title?.Trim()
+    || _model.Text?.Trim() != _original.Text?.Trim()
+    || (_model.Date?.Date ?? DateTime.MinValue) != (_original.Date?.Date ?? DateTime.MinValue);
+
+    // ---- Save/Delete/Close ----
+
+    private async Task SaveAsync()
+    {
+        if (_formRef is null) return;
+
+        await _formRef.Validate();
+        if (!_formRef.IsValid) return;
+
+
+        var date = (_model.Date ?? DateTime.Today).Date;
+        JournalEntry result;
+        if (_model.Id == 0)
+            result = await Journal.CreateAsync(_model.Title!, date, _model.Text!);
+        else
+        {
+            await Journal.UpdateAsync(_model.Id, _model.Title!, date, _model.Text!);
+            result = (await Journal.GetAsync(_model.Id))!;
+        }
+
+        await ClearDraftAsync();
+        MudDialog.Close(DialogResult.Ok(result));
+    }
+
+    private async Task DeleteAsync()
+    {
+        var ok = await Dialogs.ShowMessageBox("Delete entry", $"Delete “{_model.Title}”?",
+        yesText: "Delete", cancelText: "Cancel");
+        if (ok is true)
+        {
+            await Journal.DeleteAsync(_model.Id);
+            await ClearDraftAsync();
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+    }
+
+    private async Task CloseAsync()
+    {
+        if (IsDirty())
+        {
+            var discard = await Dialogs.ShowMessageBox("Discard changes?",
+            "You have unsaved changes. Discard them?",
+            yesText: "Discard", cancelText: "Keep editing");
+            if (discard != true) return;
+        }
+
+        await ClearDraftAsync();
+        MudDialog.Cancel();
+    }
+
+    private class EntryForm
+    {
+        public int Id { get; set; }
+        [Required] public string Title { get; set; } = string.Empty;
+        [Required] public DateTime? Date { get; set; } = DateTime.Today;
+        [Required] public string Text { get; set; } = string.Empty;
+    }
+}
+
+<style>
+.entry-edit-dialog .actions-center{
+  display:flex;
+  justify-content:center;   /* center horizontally */
+  gap:.75rem;               /* space between buttons */
+  width:100%;
+}
+</style>

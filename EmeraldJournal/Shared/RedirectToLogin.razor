@@ -1,0 +1,11 @@
+﻿@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized() {
+        var path = Nav.ToBaseRelativePath(Nav.Uri).ToLowerInvariant();
+        if (path.StartsWith("login") || path.StartsWith("register") || path == "")
+            return;
+
+        Nav.NavigateTo($"/", forceLoad: true);
+    }
+}

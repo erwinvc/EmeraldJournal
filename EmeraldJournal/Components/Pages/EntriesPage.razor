@@ -1,0 +1,260 @@
+﻿@attribute [Authorize]
+@using EmeraldJournal.Models
+@using EmeraldJournal.Services
+@using MudBlazor
+@using System.ComponentModel.DataAnnotations
+@using MudBlazor.Services
+@inject JournalService Journal
+@inject IDialogService Dialogs
+
+<MudPaper Elevation="4" Class="pa-2 mx-auto" MaxWidth="1100px">
+    <MudStack Spacing="3">
+
+        <!-- Header -->
+        <MudStack Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.h4">Entries</MudText>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.NoteAdd"
+                    OnClick="OpenCreate">
+                    New Entry
+                </MudButton>
+            </MudStack>
+            <MudSpacer></MudSpacer>
+            <MudTooltip Text="@(_newestFirst ? "Newest first" : "Oldest first")">
+                <MudIconButton Icon="@(_newestFirst? Icons.Material.Filled.South : Icons.Material.Filled.North)"
+                    Color="Color.Default" Size="Size.Medium" AriaLabel="Sort entries" OnClick="ToggleSort" />
+            </MudTooltip>
+        </MudStack>
+
+        <!-- Top pagination / status -->
+        <MudStack Direction="Row" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+            <MudText Typo="Typo.caption">
+                @if (_total == 0)
+                {
+                    <text>No entries</text>
+                    ;
+                }
+                else
+                {
+
+                    <text>Showing @StartItem–@EndItem of @_total</text>
+                    ;
+                }
+            </MudText>
+
+            @if (_pageCount > 1)
+            {
+                <MudPagination Selected="@_page" SelectedChanged="HandlePageChanged" Count="@_pageCount"
+                    ShowFirstButton="true" ShowLastButton="true" />
+            }
+        </MudStack>
+
+        <!-- List -->
+        @if (_loading)
+        {
+            <MudProgressCircular Indeterminate />
+        }
+        else
+        {
+            @if (!_entries.Any())
+            {
+                <MudAlert Severity="Severity.Info">No entries yet.</MudAlert>
+            }
+            else
+            {
+                <MudGrid GutterSize="3">
+                    @foreach (var e in _entries)
+                    {
+                        <MudItem xs="12" md="12">
+                            <MudCard Elevation="4">
+                                <MudCardHeader>
+                                    <MudStack Direction="Column" Spacing="0">
+                                        <MudText Typo="Typo.h6">@e.Title</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                            @e.Date.ToString("ddd, dd MMM yyyy")
+                                        </MudText>
+                                    </MudStack>
+                                    <MudSpacer />
+                                    <MudStack Spacing="1">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
+                                            Title="Edit" OnClick="@(() => OpenEdit(e))" />
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                            Title="Delete" OnClick="@(() => DeleteAsync(e))" />
+                                    </MudStack>
+                                </MudCardHeader>
+                                <MudDivider />
+                                <MudCardContent OnClick="@(() => ViewAsync(e))">
+                                    @if (string.IsNullOrWhiteSpace(e.Text))
+                                    {
+                                        <MudText Color="Color.Secondary">No content</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Class="preserve-ws">
+                                            @(e.Text.Length > 10000 ? e.Text[..10000] + "..." : e.Text)
+                                        </MudText>
+                                    }
+
+                                    <MudDivider />
+                                    <MudCardActions Class="justify-end">
+                                        <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                            StartIcon="@Icons.Material.Filled.ReadMore" OnClick="@(() => ViewAsync(e))">
+                                            Read
+                                        </MudButton>
+                                    </MudCardActions>
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+                    }
+                </MudGrid>
+
+                <!-- Bottom pagination -->
+                @if (_pageCount > 1)
+                {
+                    <MudStack Direction="Row" Justify="Justify.Center" Row="true" Class="mt-3">
+                        <MudPagination Selected="@_page" SelectedChanged="HandlePageChanged" Count="@_pageCount"
+                            ShowFirstButton="true" ShowLastButton="true" />
+                    </MudStack>
+                }
+            }
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    private List<JournalEntry> _entries = new();
+    private bool _loading = true;
+    private bool _newestFirst = true;
+
+    // paging state
+    private int _page = 1;
+    private int _pageSize = 25;
+    private int _total = 0;
+    private int _pageCount = 1;
+
+    private int StartItem => _total == 0 ? 0 : ((_page - 1) * _pageSize) + 1;
+    private int EndItem => Math.Min(_page * _pageSize, _total);
+
+    protected override async Task OnInitializedAsync()
+    => await FetchPageAsync(1);
+
+    private async Task FetchPageAsync(int page)
+    {
+        _loading = true;
+        try
+        {
+            var (items, total) = await Journal.GetEntriesAsync(page, _pageSize, _newestFirst);
+            _entries = items.ToList();
+            _total = total;
+            _pageCount = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
+
+            // If we fell off the end (e.g., after delete), snap back and re-fetch
+            if (page > _pageCount && _total > 0)
+            {
+                _page = _pageCount;
+                var again = await Journal.GetEntriesAsync(_page, _pageSize, _newestFirst);
+                _entries = again.Items.ToList();
+                _total = again.Total;
+            }
+            else
+            {
+                _page = page;
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task HandlePageChanged(int p)
+    => FetchPageAsync(p);
+
+    private void OnPageSizeChanged(int size)
+    {
+        if (size == _pageSize) return;
+        _pageSize = size;
+        _ = FetchPageAsync(1);
+    }
+
+    private void ToggleSort()
+    {
+        _newestFirst = !_newestFirst;
+        _ = FetchPageAsync(1);
+    }
+
+    private async Task DeleteAsync(JournalEntry e)
+    {
+        var confirm = await Dialogs.ShowMessageBox("Delete entry",
+        $"Delete “{e.Title}”?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm is true)
+        {
+            await Journal.DeleteAsync(e.Id);
+            await FetchPageAsync(_page);
+        }
+    }
+
+    private async Task OpenCreate()
+    {
+        var dlg = await Dialogs.ShowAsync<Models.Dialog.EntryEditDialog>(
+        "New Entry",
+        new DialogParameters<Models.Dialog.EntryEditDialog> { { x => x.InitialDate, DateTime.Today } },
+        new DialogOptions { FullScreen = true, MaxWidth = MaxWidth.Medium });
+
+        var res = await dlg.Result;
+        if (!res.Canceled) await FetchPageAsync(1);
+    }
+
+    private async Task OpenEdit(JournalEntry e)
+    {
+        DialogParameters<Models.Dialog.EntryEditDialog> prms = new() { { x => x.Entry, e } };
+        DialogOptions op = new DialogOptions { FullScreen = true, MaxWidth = MaxWidth.Medium };
+        var dlg = await Dialogs.ShowAsync<Models.Dialog.EntryEditDialog>("Edit Entry", prms, op);
+        var res = await dlg.Result;
+        if (res != null && !res.Canceled && res.Data is JournalEntry updated)
+        {
+            await FetchPageAsync(_page);
+        }
+    }
+
+    private async Task ViewAsync(JournalEntry entry)
+    {
+        var startIndex = _entries.FindIndex(x => x.Id == entry.Id);
+        if (startIndex < 0) return;
+
+        var parameters = new DialogParameters<Models.Dialog.EntryViewerDialog>
+{
+{ x => x._entries, _entries },
+{ x => x.StartIndex, startIndex }
+};
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Medium,
+            NoHeader = true,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        await Dialogs.ShowAsync<Models.Dialog.EntryViewerDialog>("Entry", parameters, options);
+    }
+
+    private class EntryForm
+    {
+        public int Id { get; set; }
+        [Required] public string? Title { get; set; }
+        [Required] public DateTime? Date { get; set; } = DateTime.Today;
+        [Required] public string? Text { get; set; }
+    }
+}
+
+<style>
+    .preserve-ws {
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .per-page-select {
+        min-width: 96px;
+    }
+</style>

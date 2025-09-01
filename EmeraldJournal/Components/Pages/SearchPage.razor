@@ -1,0 +1,273 @@
+﻿@attribute [Authorize]
+@using System.Net
+@using EmeraldJournal.Models
+@using EmeraldJournal.Services
+@using MudBlazor
+@inject JournalService Journal
+@inject IDialogService Dialogs
+
+<MudPaper Elevation="4" Class="pa-2 mx-auto" MaxWidth="1100px">
+    <MudStack Spacing="3">
+
+        <!-- Search input with debounce -->
+        <MudTextField Value="@_query" ValueChanged="OnQueryChanged" T="string" Immediate="true"
+            Variant="Variant.Outlined" Placeholder="Search title or content..." Adornment="Adornment.End"
+            AdornmentIcon="@Icons.Material.Filled.Search" OnAdornmentClick="@(() => SearchAsync(1))" />
+
+        @if (_loading)
+        {
+            <MudProgressCircular Indeterminate />
+        }
+        else
+        {
+            <!-- Top toolbar: results info + pagination -->
+            <MudStack Direction="Row" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudText Typo="Typo.caption">
+                    @if (_total == 0)
+                    {
+                        <text>No matching entries.</text>
+                    }
+                    else
+                    {
+                        <text>Showing @StartItem–@EndItem of @_total</text>
+                    }
+                </MudText>
+
+                @if (_pageCount > 1)
+                {
+                    <MudPagination Selected="@_page" SelectedChanged="HandlePageChanged" Count="@_pageCount"
+                        ShowFirstButton="true" ShowLastButton="true" />
+                }
+            </MudStack>
+
+            @if (_total == 0)
+            {
+                <MudAlert Severity="Severity.Info" Class="mt-2">Try a different search term.</MudAlert>
+            }
+            else
+            {
+                <MudGrid GutterSize="3">
+                    @foreach (var e in _results)
+                    {
+                        <MudItem xs="12" md="12">
+                            <MudCard Elevation="4">
+                                <MudCardHeader>
+                                    <MudStack Direction="Column" Spacing="0">
+                                        <MudText Typo="Typo.h6">@e.Title</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                            @e.Date.ToString("ddd, dd MMM yyyy")
+                                        </MudText>
+                                    </MudStack>
+                                    <MudSpacer />
+                                    <MudStack Direction="Row" Spacing="1">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
+                                            Title="Edit" OnClick="@(() => OpenEdit(e))" />
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                            Title="Delete" OnClick="@(() => DeleteAsync(e))" />
+                                    </MudStack>
+                                </MudCardHeader>
+
+                                <MudDivider />
+
+                                <MudCardContent @onclick="@(() => ViewAsync(e))" style="cursor:pointer">
+                                    <MudText Class="preserve-ws">
+                                        @((MarkupString)Snippet(e, _query, 200))
+                                    </MudText>
+                                </MudCardContent>
+
+                                <MudCardActions Class="justify-end">
+                                    <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                        StartIcon="@Icons.Material.Filled.ReadMore" OnClick="@(() => ViewAsync(e))">
+                                        Read
+                                    </MudButton>
+                                </MudCardActions>
+                            </MudCard>
+                        </MudItem>
+                    }
+                </MudGrid>
+
+                <!-- Bottom pagination (optional, nice on long lists) -->
+                @if (_pageCount > 1)
+                {
+                    <MudStack Direction="Row" Justify="Justify.Center" Class="mt-3" Row="true">
+                        <MudPagination Selected="@_page" SelectedChanged="HandlePageChanged" Count="@_pageCount"
+                            ShowFirstButton="true" ShowLastButton="true" />
+                    </MudStack>
+                }
+            }
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    private const int PageSize = 25;
+    private const int _debounceMs = 350;
+
+    private string _query = string.Empty;
+    private CancellationTokenSource? _debounceCts;
+
+    private bool _loading;
+    private List<JournalEntry> _results = new();
+
+    private int _page = 1;
+    private int _pageCount = 1;
+
+    private async Task HandlePageChanged(int p)
+    {
+        if (p == _page) return; // ignore same page
+        _page = p;
+        await SearchAsync(_page); // your paged query
+    }
+    private int _total = 0;
+
+    private int StartItem => _total == 0 ? 0 : ((_page - 1) * PageSize) + 1;
+    private int EndItem => Math.Min(_page * PageSize, _total);
+
+    protected override async Task OnInitializedAsync()
+    => await SearchAsync(1); // initial load
+
+    private async Task OnQueryChanged(string? value)
+    {
+        _query = value ?? string.Empty;
+
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        var token = _debounceCts.Token;
+
+        try
+        {
+            await Task.Delay(_debounceMs, token);
+            await SearchAsync(1); // reset to first page on new query
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task SearchAsync(int? pageOverride = null)
+    {
+        if (pageOverride.HasValue) _page = pageOverride.Value;
+
+        _loading = true;
+        try
+        {
+            Console.WriteLine($"Searching for '{_query}' page {_page}");
+            // If your service returns a tuple:
+            var (items, total) = await Journal.SearchAsync(_query, page: _page, pageSize: PageSize);
+            _results = items.ToList();
+            _total = total;
+            _pageCount = Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+
+            // If current page went out of range (e.g., after delete), snap back:
+            if (_page > _pageCount)
+            {
+                _page = _pageCount;
+                var again = await Journal.SearchAsync(_query, page: _page, pageSize: PageSize);
+                _results = again.Items.ToList();
+                _total = again.Total;
+            }
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OpenEdit(JournalEntry e)
+    {
+        DialogParameters<Models.Dialog.EntryEditDialog> prms = new() { { x => x.Entry, e } };
+        DialogOptions op = new DialogOptions { FullScreen = true, MaxWidth = MaxWidth.Medium };
+        var dlg = await Dialogs.ShowAsync<Models.Dialog.EntryEditDialog>("Edit Entry", prms, op);
+        var res = await dlg.Result;
+        if (res != null && !res.Canceled && res.Data is JournalEntry updated)
+        {
+            await SearchAsync(_page);
+        }
+    }
+
+    private async Task DeleteAsync(JournalEntry e)
+    {
+        var confirm = await Dialogs.ShowMessageBox("Delete entry",
+        $"Delete “{e.Title}”?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm is true)
+            await Journal.DeleteAsync(e.Id);
+
+        // Re-query; handle page underflow inside SearchAsync()
+        await SearchAsync(_page);
+    }
+
+    private async Task ViewAsync(JournalEntry entry)
+    {
+        var startIndex = _results.FindIndex(x => x.Id == entry.Id);
+        if (startIndex < 0) return;
+
+        var parameters = new DialogParameters<Models.Dialog.EntryViewerDialog>
+{
+{ x => x._entries, _results },
+{ x => x.StartIndex, startIndex }
+};
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Medium,
+            NoHeader = true,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        await Dialogs.ShowAsync<Models.Dialog.EntryViewerDialog>("Entry", parameters, options);
+    }
+
+    private static string Snippet(JournalEntry e, string query, int len)
+    {
+        var text = e.Text ?? string.Empty;
+        if (len <= 0) len = 120;
+
+        // No query: take leading slice, encode once
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            var slice = text.Length > len ? text[..len] + "..." : text;
+            return WebUtility.HtmlEncode(slice);
+        }
+
+        var q = query.Trim();
+        var idx = text.IndexOf(q, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+        {
+            var slice = text.Length > len ? text[..len] + "..." : text;
+            return WebUtility.HtmlEncode(slice);
+        }
+
+        // Build a window around the match (len ~ total snippet length incl. match)
+        var remaining = Math.Max(0, len - q.Length);
+        var beforeLen = Math.Min(idx, remaining / 2);
+        var afterLen = Math.Min(text.Length - (idx + q.Length), remaining - beforeLen);
+
+        var start = idx - beforeLen;
+        var end = idx + q.Length + afterLen;
+
+        var before = text.Substring(start, beforeLen);
+        var match = text.Substring(idx, q.Length);
+        var after = text.Substring(idx + q.Length, afterLen);
+
+        var sb = new System.Text.StringBuilder(beforeLen + q.Length + afterLen + 10);
+        if (start > 0) sb.Append("...");
+        sb.Append(WebUtility.HtmlEncode(before));
+        sb.Append("<mark>").Append(WebUtility.HtmlEncode(match)).Append("</mark>");
+        sb.Append(WebUtility.HtmlEncode(after));
+        if (end < text.Length) sb.Append("...");
+
+        return sb.ToString();
+    }
+    public void Dispose()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+    }
+}
+
+<style>
+    .preserve-ws {
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+</style>

@@ -1,0 +1,369 @@
+﻿@attribute [Authorize]
+@using EmeraldJournal.Models
+@using EmeraldJournal.Services
+@using MudBlazor
+@inject JournalService Journal
+@inject IDialogService Dialogs
+
+<MudPaper Elevation="4" Class="pa-2 mx-auto" MaxWidth="1100px">
+    <MudStack Spacing="3">
+       <MudStack Direction="Row" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+          <!-- Fixed-width inner nav so arrow spacing is constant -->
+          <MudStack Row="true"
+                    AlignItems="AlignItems.Center"
+                    Justify="Justify.SpaceBetween"
+                    Class="month-nav">
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" OnClick="PrevMonth" />
+            <MudText Typo="Typo.h4" Class="month-title">
+              @_month.ToString("MMMM yyyy")
+            </MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" OnClick="NextMonth" />
+          </MudStack>
+
+          <MudButton Variant="Variant.Outlined" OnClick="Today" StartIcon="@Icons.Material.Filled.Today">
+            Today
+          </MudButton>
+                      <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.NoteAdd"
+          OnClick="OpenCreate">New Entry</MudButton>
+        </MudStack>
+
+        <div class="cal">
+            <div class="cal-head">
+                @foreach (var d in _weekdayHeaders)
+                {
+                    <div class="cell head">@d</div>
+                }
+            </div>
+
+            @if (_loading)
+            {
+                <div class="cal-grid skeleton">
+                    @for (int i=0;i<42;i++) { <div class="cell day"><MudSkeleton Width="60%" /></div> }
+                </div>
+            }
+            else
+            {
+                <div class="cal-grid">
+                @foreach (var day in _gridDays)
+            {
+                var muted    = day.Month != _month.Month;
+                var count    = _counts.TryGetValue(day.Date, out var c) ? c : 0;
+                var selected = _selectedDate.HasValue && _selectedDate.Value.Date == day.Date;
+                var isToday  = day.Date == DateTime.Today;
+
+                <button class="cell day @(muted ? "muted" : "") @(selected ? "selected" : "") @(isToday ? "today" : "")"
+                        role="gridcell"
+                        aria-selected="@(selected)"
+                        aria-current="@(isToday ? "date" : null)"
+                        @onclick="@(() => SelectDay(day))"
+                        @ondblclick="@OpenCreate"
+                        title="@(count>0 ? $"{count} entr{(count==1?"y":"ies")}" : "No entries")">
+
+                    @if (count > 0)
+                    {
+                        <MudBadge Content="@count" MaxValue="99" Color="Color.Primary" Class="badge-tr strong-badge" />
+                    }
+
+                    <div class="day-top">
+                        <span class="num">@day.Day</span>
+                    </div>
+                </button>
+            }
+                </div>
+            }
+        </div>
+
+        <!-- Optional: list for the selected day -->
+        @if (_selectedDate is not null)
+        {
+            <MudPaper Class="p-3">
+                <MudText Typo="Typo.h6" Class="ml-2">@_selectedDate.Value.ToString("dddd, dd MMMM yyyy")</MudText>
+                @if (_loadingRight)
+                {
+                    <MudProgressCircular Indeterminate Class="mt-2" />
+                }
+                else if (_selectedEntries.Count == 0)
+                {
+                    <MudText Color="Color.Secondary" Class="ml-2">No entries.</MudText>
+                }
+                else
+                {
+                    <MudList T="JournalEntry" >
+<MudGrid GutterSize="3">
+                    @foreach (var e in _selectedEntries)
+                    {
+                        <MudItem xs="12" md="12">
+                            <MudCard Elevation="4">
+                                <MudCardHeader>
+                                    <MudStack Direction="Column" Spacing="0">
+                                        <MudText Typo="Typo.h6">@e.Title</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                            @e.Date.ToString("ddd, dd MMM yyyy")
+                                        </MudText>
+                                    </MudStack>
+                                    <MudSpacer />
+                                    <MudStack Spacing="1">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
+                                            Title="Edit" OnClick="@(() => OpenEdit(e))" />
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                            Title="Delete" OnClick="@(() => DeleteAsync(e))" />
+                                    </MudStack>
+                                </MudCardHeader>
+                                <MudDivider />
+                                <MudCardContent OnClick="@(() => ViewAsync(e))">
+                                    @if (string.IsNullOrWhiteSpace(e.Text))
+                                    {
+                                        <MudText Color="Color.Secondary">No content</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Class="preserve-ws">
+                                            @(e.Text.Length > 1200000 ? e.Text[..1200000] + "..." : e.Text)
+                                        </MudText>
+                                    }
+
+                                    <MudDivider />
+                                    <MudCardActions Class="justify-end">
+                                        <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                            StartIcon="@Icons.Material.Filled.ReadMore" OnClick="@(() => ViewAsync(e))">
+                                            Read More
+                                        </MudButton>
+                                    </MudCardActions>
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+                    }
+                </MudGrid>
+                    </MudList>
+                }
+            </MudPaper>
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    private DateTime _month = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private readonly string[] _weekdayHeaders = new[] { "Mon","Tue","Wed","Thu","Fri","Sat","Sun" };
+    private List<DateTime> _gridDays = new();
+    private Dictionary<DateTime,int> _counts = new();
+    private bool _loading;
+
+    private DateTime? _selectedDate;
+    private bool _loadingRight;
+    private List<JournalEntry> _selectedEntries = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        BuildGrid();
+        await LoadCountsAsync();
+    }
+
+    private void BuildGrid()
+    {
+        _gridDays.Clear();
+        // start from Monday
+        int ToMon(DayOfWeek d) => ((int)d + 6) % 7; // Mon=0..Sun=6
+        var first = new DateTime(_month.Year, _month.Month, 1);
+        var start = first.AddDays(-ToMon(first.DayOfWeek));
+        for (int i = 0; i < 42; i++)
+            _gridDays.Add(start.AddDays(i));
+    }
+
+    private async Task LoadCountsAsync()
+    {
+        _loading = true;
+        try
+        {
+            _counts = await Journal.GetCountsForMonthAsync(_month.Year, _month.Month);
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task PrevMonth()
+    {
+        _month = _month.AddMonths(-1);
+        BuildGrid();
+        _selectedDate = null; _selectedEntries.Clear();
+        await LoadCountsAsync();
+    }
+
+    private async Task NextMonth()
+    {
+        _month = _month.AddMonths(1);
+        BuildGrid();
+        _selectedDate = null; _selectedEntries.Clear();
+        await LoadCountsAsync();
+    }
+
+    private async Task Today()
+    {
+        _month = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        BuildGrid();
+        await LoadCountsAsync();
+        await SelectDay(DateTime.Today);
+    }
+
+    private async Task SelectDay(DateTime day)
+    {
+        _selectedDate = day.Date;
+        _loadingRight = true;
+        try
+        {
+            _selectedEntries = await Journal.GetEntriesAsync(day, day);
+        }
+        finally { _loadingRight = false; }
+    }
+
+    // Optional: opens your EntryViewerDialog if you have it
+    private async Task OpenViewer(JournalEntry entry)
+    {
+        var idx = _selectedEntries.FindIndex(x => x.Id == entry.Id);
+        if (idx < 0) return;
+
+        var prms = new DialogParameters<Models.Dialog.EntryViewerDialog>
+        {
+            { x => x._entries, _selectedEntries },
+            { x => x.StartIndex, idx }
+        };
+        var opts = new DialogOptions { FullScreen = true, NoHeader = true, CloseOnEscapeKey = true };
+        await Dialogs.ShowAsync<Models.Dialog.EntryViewerDialog>("", prms, opts);
+    }
+
+private async Task ViewAsync(JournalEntry entry)
+    {
+        Console.WriteLine($"Viewing entry: {entry.Id} - {entry.Title}");
+        var startIndex = _selectedEntries.FindIndex(x => x.Id == entry.Id);
+        if (startIndex < 0) return;
+
+        var parameters = new DialogParameters<Models.Dialog.EntryViewerDialog>
+{
+{ x => x._entries, _selectedEntries },
+{ x => x.StartIndex, startIndex }
+};
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Medium,
+            NoHeader = true,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        await Dialogs.ShowAsync<Models.Dialog.EntryViewerDialog>("Entry", parameters, options);
+    }
+    private async Task OpenCreate()
+    {
+        var dlg = await Dialogs.ShowAsync<Models.Dialog.EntryEditDialog>("New Entry",
+            new DialogParameters<Models.Dialog.EntryEditDialog>
+            {
+                { x => x.InitialDate, _selectedDate ?? DateTime.Today }
+            },
+            new DialogOptions { FullScreen = true, MaxWidth = MaxWidth.Medium });
+        var res = await dlg.Result;
+        if (!res.Canceled) await InvokeAsync(LoadCountsAsync); 
+        if (!res.Canceled) {
+            await LoadCountsAsync();
+            await SelectDay(_selectedDate ?? DateTime.Today);
+        }
+    }
+
+    private async Task OpenEdit(JournalEntry e)
+    {
+        DialogParameters<Models.Dialog.EntryEditDialog> prms = new() { { x => x.Entry, e } };
+        DialogOptions op = new DialogOptions { FullScreen = true, MaxWidth = MaxWidth.Medium };
+        var dlg = await Dialogs.ShowAsync<Models.Dialog.EntryEditDialog>("Edit Entry", prms, op);
+        var res = await dlg.Result;
+        if (res != null && !res.Canceled && res.Data is JournalEntry updated)
+        {
+            await InvokeAsync(LoadCountsAsync); 
+            await LoadCountsAsync();
+        }
+    }
+
+    private async Task DeleteAsync(JournalEntry e)
+    {
+        var confirm = await Dialogs.ShowMessageBox("Delete entry", $"Delete “{e.Title}”?", yesText: "Delete", cancelText:
+        "Cancel");
+        if (confirm is true)
+        {
+            await Journal.DeleteAsync(e.Id);
+            await LoadCountsAsync();
+            await SelectDay(_selectedDate ?? DateTime.Today);
+        }
+    }
+}
+
+<style>
+.cal { display:flex; flex-direction:column; gap:.5rem; }
+.cal-head { display:grid; grid-template-columns:repeat(7,1fr); gap:.5rem; }
+.cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:.5rem; }
+.cal-grid.skeleton .cell { height:100px; }
+.cell { border:1px solid var(--mud-palette-lines-default); border-radius:10px; padding:.5rem; min-height:100px; }
+.cell.head { border:none; text-align:center; font-weight:600; color: var(--mud-palette-text-secondary); }
+.cell.day { position: relative; transition: box-shadow .15s ease, background-color .15s ease, border-color .15s ease; }
+
+/* highlight the selected cell */
+.cell.day.selected{
+  border-color: var(--mud-palette-primary);
+  box-shadow:
+    0 0 0 1px var(--mud-palette-surface), /* thin separation ring */
+    0 0 0 2px var(--mud-palette-primary);  /* primary highlight ring */
+  background-color: rgba(0,0,0,0.02);      /* subtle fill; looks fine in light/dark */
+}
+
+/* keep “muted” days less prominent even if selected (optional) */
+.cell.day.muted.selected{
+  background-color: rgba(0,0,0,0.03);
+  opacity: .85;
+}
+.cell.day:hover { box-shadow: var(--mud-elevation-3); }
+.cell.day.muted { opacity:.25; }
+.day-top { display:flex; justify-content:space-between; align-items:center; }
+.num { font-weight:600; }
+.count { margin-left:.5rem; }
+.cell.day { display:flex; flex-direction:column; align-items:flex-start; }
+.cell.day button, .cell.day a { all:unset; } /* (safety if nested) */
+.cell.day { border-color: var(--mud-palette-lines-default); }
+.cell.day { position: relative; }
+
+.month-nav{
+  width: 420px;           /* pick a width you like */
+  max-width: 100%;        /* don’t break on narrow screens */
+}
+
+/* title won’t push the arrows; it truncates with … */
+.month-title{
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Top-right badge */
+.badge-tr {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 2;
+  pointer-events: none; /* keep the whole cell clickable */
+}
+.preserve-ws{
+  white-space: pre-wrap;  /* keep \n and sequences of spaces */
+  word-break: break-word; /* avoid overflow on long words/URLs */
+}
+
+.cell.day { position: relative; overflow: hidden; }
+
+/* Make "today" obvious but compact */
+.cell.day.today .num{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 .45rem;                /* small pill */
+  min-width: 1.6rem;                /* keeps a nice circle-ish shape */
+  line-height: 1.6rem;
+  border-radius: 9999px;
+  background: var(--mud-palette-primary);
+  color: var(--mud-palette-primary-contrast-text);
+  font-weight: 600;
+}
+</style>

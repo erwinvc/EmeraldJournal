@@ -1,0 +1,18 @@
+@page "/{Tab?}"
+@layout MainLayout
+@using EmeraldJournal.Services
+@attribute [Authorize]
+@inject NavigationManager      Nav
+
+@switch (Tab?.ToLower())
+{
+    case "entries":         <EntriesPage/>; break;
+    case "search":          <SearchPage/>; break;
+    case "calendar":        <CalendarPage/>; break;
+    case "settings":        <SettingsPage/>; break;
+    default:                <EntriesPage/>; break;
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+}

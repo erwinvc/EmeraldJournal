@@ -1,0 +1,101 @@
+﻿@page "/login"
+@inject IJSRuntime JS
+@inject NavigationManager NavigationManager
+@using EmeraldJournal.Models.ViewModels
+@using MudBlazor
+@using System.Text.Json
+
+<MudContainer MaxWidth="MaxWidth.ExtraSmall" Class="mx-auto mt-8">
+
+    <MudPaper Style="border-radius: 12px" Class="pa-5">
+
+        <MudForm Model="Model"
+                 @ref="_form"
+                 OnValidSubmit="LogInAsync">
+
+            <MudStack Spacing="3" AlignItems="AlignItems.Stretch">
+
+                <MudText Typo="Typo.h5" Align="Align.Center">LOGIN</MudText>
+
+                <MudTextField @bind-Value="Model.UserName"
+                              Label="Username"
+                              InputType="InputType.Text"
+                              Required="true"
+                              Immediate="true"
+                              InputAttributes="@(new Dictionary<string, object> {
+                                  { "name", "j_username" },
+                                  { "autocomplete", "username" }
+                              })" />
+
+                <MudTextField @bind-Value="Model.Password"
+                              Label="Password"
+                              InputType="InputType.Password"
+                              Required="true"
+                              InputAttributes="@(new Dictionary<string, object> {
+                                  { "name", "j_password" },
+                                  { "autocomplete", "current-password" }
+                              })" />
+
+                <MudCheckBox @bind-Checked="Model.RememberMe" T="bool"
+                             Label="Remember me" />
+
+                @if (!string.IsNullOrWhiteSpace(errorMessage)) {
+                    <MudAlert Severity="Severity.Error" Dense="true">
+                        @((MarkupString)errorMessage)
+                    </MudAlert>
+                }
+
+                <MudButton Variant="Variant.Filled"
+                           OnClick="LogInAsync"
+                           Color="Color.Primary"
+                           Disabled="@isBusy"
+                           Loading="@isBusy"
+                           Type="Submit"
+                           FullWidth="true">
+                    Login
+                </MudButton>
+
+                <MudText Typo="Typo.body2" Align="Align.Center">
+                    Don't have an account?
+                    <MudLink Href="/register">Register here</MudLink>
+                </MudText>
+
+            </MudStack>
+
+        </MudForm>
+
+    </MudPaper>
+
+</MudContainer>
+
+@code {
+    private LoginViewModel Model { get; set; } = new();
+    private MudForm? _form;
+    private string? errorMessage;
+    private bool isBusy;
+
+    private async Task LogInAsync() {
+        isBusy = true; errorMessage = null;
+
+        var result = await JS.InvokeAsync<LoginResult>("postJson", "/api/account/login", Model);
+
+        if (result.ok) {
+            NavigationManager.NavigateTo("/", forceLoad: true);
+            return;
+        }
+
+        errorMessage = PrettyError(result.text);
+        isBusy = false;
+    }
+
+    private static string PrettyError(string raw) {
+        try {
+            var msgs = JsonSerializer.Deserialize<string[]>(raw);
+            return msgs is null ? raw : string.Join("<br/>", msgs);
+        } catch {
+            return raw;
+        }
+    }
+
+    private record LoginResult(bool ok, string text);
+}

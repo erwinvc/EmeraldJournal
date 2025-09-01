@@ -1,0 +1,106 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.Components.Authorization
+@using EmeraldJournal.Components
+@using EmeraldJournal.Services
+@inject IDialogService DialogService
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+
+<PageTitle>EmeraldJournal - Journaling tooling</PageTitle>
+
+<AuthorizeView Roles="Admin">
+    <MudAlert Severity="Severity.Info">Logged in as admin</MudAlert>
+</AuthorizeView>
+
+<AuthorizeView>
+    <Authorized>
+        <RedirectToEntries></RedirectToEntries>
+    </Authorized>
+    <NotAuthorized>
+        <MudContainer MaxWidth="MaxWidth.False" Class="d-flex flex-column justify-center align-center" Style="min-height: 100vh;">
+            
+            <!-- Main Content Container -->
+            <MudPaper Class="pa-8 ma-4 text-center" Elevation="8" Style="border-radius: 24px; max-width: 600px;">
+                
+                <!-- Main Heading -->
+                <MudText Typo="Typo.h3" Align="Align.Center" Class="mb-2" Style="font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+                    Welcome to EmeraldJournal
+                </MudText>
+                
+                <!-- Subtitle -->
+                <MudText Typo="Typo.h6" Align="Align.Center" Class="mb-6" Style="opacity: 0.9; font-weight: 300;">
+                    The one and only custom journaling tooling
+                </MudText>
+                
+                <!-- Features List -->
+                <MudGrid Justify="Justify.Center" Class="mb-6">
+                    <MudItem xs="4" sm="4" Class="d-flex flex-column align-center">
+                        <MudIcon Icon="@Icons.Material.Filled.Speed" Size="Size.Medium" Class="mb-2" Style="color: rgba(255,255,255,0.8);" />
+                        <MudText Typo="Typo.body2" Align="Align.Center" Style="opacity: 0.8;">Pretty slow</MudText>
+                    </MudItem>
+                    <MudItem xs="4" sm="4" Class="d-flex flex-column align-center">
+                        <MudIcon Icon="@Icons.Material.Filled.Tune" Size="Size.Medium" Class="mb-2" Style="color: rgba(255,255,255,0.8);" />
+                        <MudText Typo="Typo.body2" Align="Align.Center" Style="opacity: 0.8;">Not that customizable</MudText>
+                    </MudItem>
+                    <MudItem xs="4" sm="4" Class="d-flex flex-column align-center">
+                        <MudIcon Icon="@Icons.Material.Filled.Security" Size="Size.Medium" Class="mb-2" Style="color: rgba(255,255,255,0.8);" />
+                        <MudText Typo="Typo.body2" Align="Align.Center" Style="opacity: 0.8;">Not secure & reliable</MudText>
+                    </MudItem>
+                </MudGrid>
+                
+                <!-- Action Buttons -->
+                <MudStack Direction="Row" Justify="Justify.Center" Spacing="3" Class="mb-4">
+                    <MudButton Variant="Variant.Filled" 
+                               Size="Size.Large"
+                               StartIcon="@Icons.Material.Filled.Login" 
+                               Href="/login"
+                               Class="px-6 py-3"
+                               Style="background-color: white; color: #667eea; font-weight: 600; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); text-transform: none;">
+                        <MudText Typo="Typo.button">Sign In</MudText>
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" 
+                               Size="Size.Large"
+                               StartIcon="@Icons.Material.Filled.PersonAdd" 
+                               Href="/register"
+                               Class="px-6 py-3"
+                               Style="border-color: white; color: white; font-weight: 600; border-radius: 12px; border-width: 2px; text-transform: none;">
+                        <MudText Typo="Typo.button">Create Account</MudText>
+                    </MudButton>
+                </MudStack>
+                
+            </MudPaper>
+            
+            <!-- Spacer to push footer down -->
+            <MudSpacer />
+            
+            <!-- Footer -->
+            <MudPaper Class="pa-4 mt-8" Elevation="0" Style="background-color: transparent; width: 100%;">
+                <MudDivider Class="mb-4" />
+                <MudStack Direction="Row" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudText Typo="Typo.body2" Style="opacity: 0.6;">
+                        © 2025 EmeraldJournal. No rights reserved.
+                    </MudText>
+                    <MudStack Direction="Row" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudText Typo="Typo.body2" Style="opacity: 0.6;">
+                            Taped together with duct tape by
+                        </MudText>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">
+                            <MudIcon Icon="@Icons.Material.Filled.Code" Size="Size.Small" Class="mr-1" />
+                            Erwin van Crasbeek
+                        </MudChip>
+                    </MudStack>
+                </MudStack>
+            </MudPaper>
+            
+        </MudContainer>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code
+{
+    //protected override void OnInitialized() {
+    //    var path = Nav.ToBaseRelativePath(Nav.Uri).ToLowerInvariant();
+    //    if (string.IsNullOrEmpty(path) || path == "index")
+    //        Nav.NavigateTo("/characters", false);
+    //}
+}

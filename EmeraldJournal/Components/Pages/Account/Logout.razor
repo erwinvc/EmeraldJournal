@@ -1,0 +1,18 @@
+﻿@page "/logout"
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Http
+@inject IJSRuntime JS
+@inject NavigationManager NavigationManager
+
+<MudText Typo="Typo.subtitle1">Signing you out…</MudText>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (!firstRender) return;
+
+        var ok = await JS.InvokeAsync<JsResult>("postJson", "/api/account/logout", null);
+        NavigationManager.NavigateTo("/", forceLoad: true);
+    }
+
+    private record JsResult(bool ok, string text);
+}

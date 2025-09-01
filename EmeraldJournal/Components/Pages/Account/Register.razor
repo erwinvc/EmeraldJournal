@@ -1,0 +1,117 @@
+﻿@page "/register"
+@using EmeraldJournal.Models.ViewModels
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@using MudBlazor
+@using System.Text.Json
+
+<MudContainer MaxWidth="MaxWidth.ExtraSmall" Class="mx-auto mt-8">
+
+    <MudPaper Style="border-radius: 12px" Class="pa-5">
+
+        <MudForm Model="Model"
+                 @ref="_form"
+                 OnValidSubmit="RegisterAsync">
+
+            <MudStack Spacing="3" AlignItems="AlignItems.Stretch">
+
+                <MudText Typo="Typo.h5" Align="Align.Center">REGISTER</MudText>
+
+                <MudTextField @bind-Value="Model.UserName"
+                              Label="Username"
+                              Required="true"
+                              Immediate="true"
+                              InputType="InputType.Text"
+                              InputAttributes="@(new Dictionary<string, object> {
+                                  { "name", "j_username" },
+                                  { "autocomplete", "username" }
+                              })" />
+
+                <MudTextField @bind-Value="Model.Password"
+                              Label="Password"
+                              InputType="@PasswordInput" Adornment="Adornment.End" AdornmentIcon="@PasswordInputIcon" OnAdornmentClick="ButtonTestclick"
+                              Required="true"
+                              InputAttributes="@(new Dictionary<string, object> {
+                                  { "name", "j_password" },
+                                  { "autocomplete", "new-password" }
+                              })" />
+
+                @if (!string.IsNullOrWhiteSpace(errorMessage)) {
+                    <MudAlert Severity="Severity.Error" Dense="true">
+                        @((MarkupString)errorMessage)
+                    </MudAlert>
+                }
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Disabled="@isBusy"
+                           Loading="@isBusy"
+                           Type="Submit"
+                           OnClick="RegisterUser"
+                           FullWidth="true">
+                    Create account
+                </MudButton>
+
+                <MudText Typo="Typo.body2" Align="Align.Center">
+                    Already have an account?
+                    <MudLink Href="/login">Log in here</MudLink>
+                </MudText>
+
+            </MudStack>
+
+        </MudForm>
+
+    </MudPaper>
+
+</MudContainer>
+
+@code {
+    public RegisterViewModel Model { get; set; } = new();
+    private MudForm? _form;
+    private string? errorMessage;
+    private bool isBusy = false;
+
+    private async Task RegisterUser() {
+        isBusy = true;
+
+        var result = await JS.InvokeAsync<JsResult>(
+                                 "postJson", "/api/account/register", Model);
+
+        if (result.ok) {
+            Nav.NavigateTo("/", forceLoad: true);
+            return;
+        }
+
+        errorMessage = PrettyError(result.text);
+        isBusy = false;
+    }
+
+    private static string PrettyError(string raw) {
+        try {
+            var msgs = JsonSerializer.Deserialize<string[]>(raw);
+            return msgs is null ? raw : string.Join("<br/>", msgs);
+        } catch {
+            return raw;
+        }
+    }
+
+    private record JsResult(bool ok, string text);
+
+    InputType PasswordInput = InputType.Password;
+    bool isShow;
+    string PasswordInputIcon = Icons.Material.Filled.VisibilityOff;
+
+    void ButtonTestclick() {
+        @if (isShow) {
+            isShow = false;
+            PasswordInputIcon = Icons.Material.Filled.VisibilityOff;
+            PasswordInput = InputType.Password;
+        } else {
+            isShow = true;
+            PasswordInputIcon = Icons.Material.Filled.Visibility;
+            PasswordInput = InputType.Text;
+        }
+    }
+}
